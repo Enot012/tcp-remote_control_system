@@ -1,0 +1,272 @@
+P.S
+ The program is still being updated and has enough bugs that it shouldn't be used for malicious purposes — which is exactly why I published it :)
+ 
+Features:
+	CMD <client|all> <command>                   - Execute a command            
+	export <client|all> <path_client>            - Retrieve files from a client     
+	import <client|all> <path_ser> [path_client] - Send files to a client/all 
+	save <client> <n>                            - Save the output          
+	simpl <client|all>                           - Execute commands from a file   
+																				  
+	chart_new                                    - Create a scheduled command   
+	chart_list                                   - Show scheduled commands  
+	chart_del <index>                            - Delete a scheduled command   
+	chart_comd                                   - Show list of completed commands
+																				  
+	group_new <n>                                - Create a group               
+	group_list                                   - Show groups              
+	group_del <n>                                - Delete a group               
+																				  
+	list                                         - List of users           
+	status                                       - Active commands               
+	cancel <client>                              - Cancel a command               
+	kick <client|all>                            - Disconnect a client/all         
+	help                                         - Show list of commands          
+	EXIT                                         - Stop the server   
+
+File structure
+
+All names inside curly braces "{}" are replaced with the actual name in the code itself.
+HA_10/
+│
+├── code.txt
+├── users.json
+├── server_state.json
+├── crash.log
+│
+├── save/
+│	└──{name_file}.txt
+│
+├── trash/
+│	└──output_command_{user_name}.txt
+│
+├── history/
+│	└──{user_name}.json
+│
+├── files/
+│	├──{user_name}
+│   ├── scheduled_commands/
+│	└── {user_name}/
+│
+├── logs/
+│	└──{time_log}.log
+│
+└── json/
+    ├── groups.json
+    └── scheduled_commands.json
+	
+	
+
+Let's go through each flag
+
+It is important to note that all commands are very sensitive to spaces and any other stray characters you might type.
+All flags must be written exactly as shown above.
+For flags CMD, import, and simpl, you can use all instead of a username if you want to send a command to all active users.
+
+1.CMD
+	Called in the terminal like this (CMD user command, CMD all command). Groups are not yet implemented.
+	The command is executed in the user's shell, so you need to know which commands exist on that system and how to write them.
+
+2.export
+		 Called in the terminal like this (export user path_on_client, export user path_on_client path_on_server).
+		 Specifying the path on the server is optional. The default save path is: HA_10/files/{user_name}/received/
+		 {user_name} — the user's alias stored in users.json.
+
+3.import 
+		 Called in the terminal like this (import user path_on_server path_on_client).
+		 Example:
+				import enot /home/ubuntu/video_file.mp4 C:\Users\ — when specifying the path on the client side, you don't have to include the filename at the end. If the target folder doesn't exist, the program will simply create it and place video_file.mp4 inside.
+
+4.simpl 
+		 Called in the terminal like this (simpl user, simpl all).
+		 How it works: the server must already have a file called code.txt (if it doesn't exist, it will only be created when the command is called — it is not checked on startup). Commands are written in this file line by line.
+		 Example:
+			code.txt/
+				ls
+				ls -l
+				dir
+				ipconfig /all
+		When executed, a file named after the user is created, which stores the output received from the user.
+		Save path: HA_10/trash/output_command_{user_name}.txt 
+		There is only one file per user, so command outputs are appended to the end of the file.
+
+5.save 
+	Called in the terminal like this (save user name_file).
+	This command saves the last output of the user specified in the user parameter.
+	Save path: HA_10/save/{name_file}.txt
+	{name_file} — the file name you provide.
+	
+Those were the commands that execute in the user's terminal. But scheduled commands also exist.
+How to create a scheduled command:
+	Call the chart_new command
+	Specify which user it is intended for
+	Specify the command type
+	And finally, depending on the command type, specify the path/command
+		
+		Example:
+			>chart_new
+			Target (all/username/group:name): group:dev
+				all — a flag that will send the command to all users who have ever connected to the server, i.e. all names in users.json.
+				username — a specific user, but currently there is no validation check, meaning the program doesn't verify whether that user actually exists in users.json.
+				group — the command will be sent only to users belonging to that group. Say we have a group named dev — see the call example above.
+			Type (CMD/SIMPL/IMPORT/EXPORT):
+				I think there's no need to stop here, but I'll add that for export the server-side path it requests is optional.
+				Also, commands other than CMD are written in lowercase.
+			After that, everything depends on the chosen type, and is fairly self-explanatory.
+
+That wraps up the topic of commands that require a user target. Once again, they all have plenty of flaws and issues — from extra spaces to problems with saving output to files.
+
+Let's start with the JSON files.
+
+users.json — a file that stores information about all users who have ever connected to the server.
+
+Structure
+	"users":[
+		"{user_name}":{
+			"alias": " ",
+			"status": " ",
+			"last_login": " ",
+			"last_logout": " "
+				}
+			]
+			
+	alias — a transliterated name (in Latin characters), needed when the name is written in Cyrillic.
+			It can also be used instead of the username in commands, but apparently not in scheduled commands.
+	status — whether the user is connected to the server or not: ON/OFF.
+	last_login — when the user last connected to the server.
+	last_logout — when the user last disconnected from the server; null if they haven't disconnected.
+
+
+server_state.json — a file that stores information about the server. Basically junk, used only by the code itself.
+Structure 
+	  "timestamp": 0,
+	  "datetime": " ",
+	  "connected_clients": [],
+	  "active_commands": {},
+	  "output_buffers": {}
+	  
+	timestamp — I honestly don't remember why I added this, but it's there and unused.
+	datetime — the time the code was started.
+	connected_clients — users currently connected to the server (online users).
+	active_commands — commands currently being executed; needed by the code only.
+	output_buffers — output buffer for user commands, constantly being cleared.
+
+scheduled_commands.json — a file for storing scheduled commands.
+Structure 
+	"commands": [
+		{
+		  "target": "",
+		  "command_type": "",
+		  "created_at": "",
+		  "source_path": "",
+		  "dest_path": "",
+		  "expected_users": [],
+		  "completed_users": []
+		}
+	  ],
+	    "completed": [
+			{
+			  "target": "",
+			  "command_type": "",
+			  "created_at": "",
+			  "expected_users": [],
+			  "completed_users": [],
+			  "command": " ",
+			  "completed_at": ""
+			}
+		  ]
+	  
+	 commands — the block where scheduled commands are stored.
+		 target — the username the command is intended for; can be all/username/group:name.
+		 command_type — the type of command.
+		 created_at — the time the scheduled command was created.
+		 source_path — appears for the import command type; stores the server-side path.
+		 dest_path — appears for import/export command types; stores the client-side path.
+		 expected_users — stores the names of users awaiting the command (why? I'll explain soon).
+		 completed_users — stores the names of users who have already received the command.
+	completed — the block where all completed commands are stored.
+		Most field names should already be familiar, so let's focus on the unfamiliar ones.
+		expected_users — junk that shouldn't be here, but it is.
+		command — the command that was executed.
+		completed_at — the time the command was completed.
+		
+groups.json — a file for storing user groups.
+Structure
+	"{name_group}":[]
+	
+		{name_group} — the group name specified by the user; this field stores the names of users added to the group.
+	"{name_group}":[
+		"user_1",
+		"user_2"
+	]
+		
+{user_name}.json — the client's session log.
+
+Structure 
+  "username": "",
+  "alias": "",
+  "sessions": [
+    {
+      "login": "",
+      "logout": ""
+    }
+	]
+
+{time_log}.log — a log file where almost everything gets logged, whether needed or not. The filename includes the creation time of the file.
+
+That's it for the files. Let's go back to commands.
+
+Previously we covered commands of the Server 🔄 Client type. Now let's look at commands executed by the code on the server.
+
+These are:
+
+Scheduled commands block:
+	chart_new                                    - Create a scheduled command   
+	chart_list                                   - Show scheduled commands  
+	chart_del <index>                            - Delete a scheduled command   
+	chart_comd                                   - Show list of completed commands
+				
+Groups block:				
+	group_new <n>                                - Create a group               
+	group_list                                   - Show groups              
+	group_del <n>                                - Delete a group               
+					
+block server command:				
+	list                                         - List of users           
+	status                                       - Active commands               
+	cancel <client>                              - Cancel a command               
+	kick <client|all>                            - Disconnect a client/all         
+	help                                         - Show list of commands          
+	EXIT                                         - Stop the server
+  
+  
+Scheduled commands block:
+
+	chart_new — already covered above, scroll up. To repeat: this command does not validate whether users or commands exist.
+
+	chart_list — a command that displays a list of all scheduled commands (commands that haven't been executed yet).
+
+	chart_del — deletes commands by index. When you call chart_list, the number in [0] is the index.
+			Terminal example: 
+								chart_del 0 
+						
+	chart_comd — displays a list of already completed or partially completed commands.
+
+Groups block:
+	group_new — a command for creating a user group; it also does not validate names.
+			Terminal example:
+				group_new dev
+					Creating group 'dev'
+					 Enter usernames one at a time. Type EXIT to finish:
+					  > enot
+					  > user_1
+					  > EXIT
+				Group 'dev' created with 2 members.
+	group_list — displays the created groups and the users in them.
+	group_del — deletes a group, but is very sensitive to characters. If the group was created with a Cyrillic name and you try to delete it using a Latin name, the code simply won't find the group.
+
+The server command block I don't think needs reviewing, as everything is self-explanatory. I'll just mention that cancel is a relic of the past — it probably works, but I haven't found a real use for it (
+
+When specifying the path to a user, you can use "{user}" to tell the code to replace the username with the client name, which in turn is the profile name.
+
+The code still has the ability to send regular messages, which is both a plus and a minus, because if the command is written incorrectly, the server code will not say anything, but will simply send it as a text message.

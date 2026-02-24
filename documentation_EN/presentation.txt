@@ -1,0 +1,66 @@
+TCP Remote Control System
+Asynchronous client-server system for remote control of computers via TCP.
+Features:
+
+    Remote control
+    CMD - Execution of commands on clients
+    SIMPL - Batch execution of commands from a file
+    IMPORT/EXPORT - Two-way file transfer
+	Deferred commands
+
+Automatic command execution when a client connects
+Target support: specific user, group, all clients
+Execution status tracking
+Placeholder {User} for substituting the client name
+
+Group system:
+
+    Creating user groups
+	Bulk sending of commands to a group
+    Participant management
+
+Monitoring:
+
+    Tracking active commands
+    Timeouts and warnings
+    Execution history
+    Logging of all actions
+
+Key features:
+
+	Asynchronous architecture (asyncio) - simultaneous work with multiple clients
+	All flag - mass sending of commands to all connected clients
+	Auto-reconnect - the client automatically reconnects when the connection is lost
+	Saving results - command execution history
+	Renaming users (alias) for convenience
+	Failure protection - error isolation, graceful degradation
+
+Files
+server_v3_SIMPL_REALLY_FIXED.py
+Control server. Accepts client connections, sends commands, receives results, manages deferred commands and groups.
+Basic commands:
+CMD <client|all> <command>        # Execute command
+simpl <client|all>                # Commands from code.txt
+import <client|all> <path> <path> # Send file
+export <client> <path> [dir]      # Receive file
+kick <client|all>                 # Disconnect client
+rename <user> <alias>             # Rename
+chart_new                         # Create delayed command
+group_new <name>                  # Create group
+list                              # User list
+help                              # All commands
+client_v3_SIMPL_ALL_FIXED.py
+Client. Connects to the server, executes commands, sends results and files.
+Features:
+
+Automatic reconnection when connection is lost
+Chunking of large outputs for reliable transmission
+KICK command processing with correct termination
+cp866 encoding for correct operation in Windows
+
+
+
+Python 3.7+
+asyncio - asynchronous programming
+socket - network interaction
+json - data storage
