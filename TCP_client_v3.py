@@ -25,7 +25,7 @@ import sys
 from pathlib import Path
 
 # Настройки подключения
-SERVER_HOST = "44.220.46.129" # Айпи адрес сервера
+SERVER_HOST = "0.0.0.0" # Айпи адрес сервера
 SERVER_PORT = 9000 # Порт сервера
 RECONNECT_DELAY = 5  # Задержка перед переподключением в секундах
 MAX_RECONNECT_ATTEMPTS = 0  # 0 = бесконечные попытки

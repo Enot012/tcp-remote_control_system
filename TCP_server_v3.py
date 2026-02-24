@@ -34,7 +34,7 @@ from typing import Dict, Optional, Any
 class Config:
     """Централизованная конфигурация сервера"""
     # Директории
-    BASE_DIR = "/home/ubuntu/HA_9"
+    BASE_DIR = ".../HA_10"
     DIR_SAVE = f"{BASE_DIR}/save"
     DIR_TRASH = f"{BASE_DIR}/trash"
     DIR_HISTORY = f"{BASE_DIR}/history"
