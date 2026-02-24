@@ -1887,7 +1887,7 @@ async def main():
         Logger.log("INFO",
                    f"Таймаут команд: {Config.COMMAND_TIMEOUT}s "
                    f"(предупреждение: {Config.WARNING_TIMEOUT}s)")
-        print("dev by ENOT and claude")
+        print("dev by ENOT")
         print_command()
 
 
