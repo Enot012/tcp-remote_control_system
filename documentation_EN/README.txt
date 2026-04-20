@@ -25,4 +25,5 @@ Contacts aren’t there for you to spam them with nonsense or remind me that I c
 
 Good luck with analyzing the code! 
 
+P.s written 24.02
 
