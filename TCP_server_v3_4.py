@@ -12,8 +12,8 @@
     -ProtocolHandler    >   логика протоколов(OUTPUT,FILETRU)
     -ServerDispatcher   >   маршрутизирует ServerCmd → метод CommandHandler
     -ProtocolDispatcher >   маршрутизирует ClientMsg → метод ProtocolHandler
-    -ServerCmd          >   StrEnum стек переменных консоли
-    -ClientMsg          >   StrEnum стек протоколов сервера
+    -ServerCmd          >   StrEnum для описания стека консольных команд
+    -ClientMsg          >   StrEnum для описания стека протоколов
 -Изменения
     -GroupManager — методы переименованы и появился _sync_users:
         create_group()            >   create()
