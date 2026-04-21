@@ -588,9 +588,10 @@ class UserManager:
 
 class GroupManager:
 
-    def __init__(self, user_mgr: UserManager):
+    def __init__(self, user_mgr: UserManager,state :ServerState):
         self._cache:    Optional[Dict] = None
         self._user_mgr: UserManager    = user_mgr
+        self._state=state
 
     def _load(self) -> Dict:
         if self._cache is None:
@@ -628,7 +629,7 @@ class GroupManager:
     def get_members(self, group_name: str) -> Optional[list]:
         return self._load().get(group_name)
 
-    def get_all_names(self) -> list:
+    def get_all_group(self) -> list:
         return list(self._load().keys())
 
     def get_data(self) -> Dict:
@@ -678,6 +679,15 @@ class GroupManager:
         self._sync_users(group_name, [u for u in users if u not in skipped], add=False)
         self._save()
         return skipped
+
+    def get_online_user(self,group_name) ->list:
+        members=self.get_members(group_name)
+        online=[]
+        for u in members:
+            if self._state.is_connected(u):
+                online.append(u)
+        print(f"Онлайн {len(online)}/{len(members)}\n{','.join(online)}")
+        return online
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -991,20 +1001,29 @@ class CommandHandler:
     # ── helpers ──────────────────────────────────────────────────────────
 
     def _resolve(self, name: str) -> Optional[str]:
+        if name == "all":
+            return name
+        if name.startswith("group:"):
+            group_name=name[6:]
+            return group_name if group_name in self._group_mgr.get_all_group() else []
         return self._user_mgr.validate(name)
 
-    def _require_connected(self, target: str) -> Optional[str]:
-        real = self._resolve(target) or target
-        if not self._state.is_connected(real):
-            print(f" {real} не подключен")
-            return None
+    def _require_connected(self, target: str) -> list:
+        real = self._targets(target)
+        if not  real:
+            print(f" Пользователи не подключены")
+            return []
         return real
 
     def _targets(self, target: str) -> list:
-        """Разворачивает 'all' / username в список подключённых клиентов."""
+        """Разворачивает 'all' / group / username в список подключённых клиентов."""
         if target == "all":
             return self._state.get_all_clients()
-        real = self._resolve(target) or target
+        if target.startswith("group:"):
+            group_name=target[6:]
+            user=self._group_mgr.get_online_user(group_name)
+            return user
+        real = self._user_mgr.validate(target)
         return [real] if self._state.is_connected(real) else []
 
     def _sub(self, text: str, cid: str) -> str:
@@ -1033,25 +1052,28 @@ class CommandHandler:
 
     async def cmd(self, args: list):
         if len(args) < 2:
-            print("Формат: CMD <client|all> <команда>")
+            print("Формат: CMD <client|all|group:> <команда>")
             return
         target, command = args[0], " ".join(args[1:])
 
         if not self._resolve(target):
             print("Пользователь не найден")
             return
-        for cid in self._targets(target):
-            c = self._sub(command, cid)
-            self._state.register_command(cid, c, "CMD", 1)
-            self._state.get_writer(cid).write(f"CMD:{c}\n".encode())
-            await self._drain(cid)
-        print(f" CMD → {target}")
+        user=self._require_connected(target)
+        if user:
+            for cid in user:
+                c = self._sub(command, cid)
+                self._state.register_command(cid, c, "CMD", 1)
+                self._state.get_writer(cid).write(f"CMD:{c}\n".encode())
+                await self._drain(cid)
+            print(f" CMD → {target}")
+
 
 
 
     async def simpl(self, args: list):
         if len(args) < 1:
-            print("Формат: simpl <client|all>")
+            print("Формат: simpl <client|all|group:>")
             return
         if not self._resolve(args[0]):
             print("Пользователь не найден")
@@ -1059,41 +1081,45 @@ class CommandHandler:
         commands = self._read_code_file()
         if not commands:
             return
-        for cid in self._targets(args[0]):
-            await self._send_simpl(cid, commands)
-            print(f" {len(commands)} команд → {cid}")
+        user=self._require_connected(args[0])
+        if user:
+            for cid in user:
+                await self._send_simpl(cid, commands)
+                print(f" {len(commands)} команд → {cid}")
 
 
     async def export(self, args: list):
         if len(args) < 2:
-            print("Формат: export <client> <path> [dest]")
+            print("Формат: export <client|all|group:> <path> [dest]")
             return
-        cid = self._require_connected(args[0])
-        if not cid:
-            return
-        src = self._sub(args[1], cid)
-        dst = args[2] if len(args) > 2 else "received"
-        self._state.register_command(cid, f"export {src}", "EXPORT", 1)
-        self._state.get_writer(cid).write(f"EXPORT;{src};{dst}\n".encode())
-        await self._drain(cid)
-        print(f" Запрос экспорта → {cid}")
+        user = self._require_connected(args[0])
+        if user:
+            for cid in user:
+                src = self._sub(args[1],cid)
+                dst = args[2] if len(args) > 2 else "received"
+                self._state.register_command(cid, f"export {src}", "EXPORT", 1)
+                self._state.get_writer(cid).write(f"EXPORT;{src};{dst}\n".encode())
+                await self._drain(cid)
+                print(f" Запрос экспорта → {cid}")
 
 
     async def import_(self, args: list):
         if len(args) < 2:
-            print("Формат: import <client|all> <path_server> [path_client]")
+            print("Формат: import <client|all|group:> <path_server> [path_client]")
             return
         target = args[0]
         src    =  self._sched_mgr.sub_serv_path(args[1])
         dst  = args[2] if len(args) > 2 else "received"
         sent = 0
-        for cid in self._targets(target):
-            d = self._sub(dst, cid)
-            self._state.register_command(cid, f"import {src}", "IMPORT", 1)
-            await FileTransfer.send_to_client(cid, src, d, self._state)
-            self._state.unregister_command(cid)
-            sent += 1
-        print(f" Отправлено {sent} клиентам")
+        user= self._require_connected(target)
+        if user:
+            for cid in self._targets(target):
+                d = self._sub(dst, cid)
+                self._state.register_command(cid, f"import {src}", "IMPORT", 1)
+                await FileTransfer.send_to_client(cid, src, d, self._state)
+                self._state.unregister_command(cid)
+                sent += 1
+            print(f" Отправлено {sent} клиентам")
 
     async def save(self, args: list):
         if len(args) < 2:
@@ -1967,13 +1993,13 @@ async def _aiter(lst: list):
 # MAIN
 # ═══════════════════════════════════════════════════════════════════════════
 
-async def main():
+async def TCPServer():
     ensure_dirs()
 
     # Зависимости
     state     = ServerState()
     user_mgr  = UserManager()
-    group_mgr = GroupManager(user_mgr)
+    group_mgr = GroupManager(user_mgr,state)
     sched_mgr = ScheduledManager(user_mgr, group_mgr)
     monitor   = CommandMonitor(state, user_mgr)
     ban_mgr   = BanManager(state)
@@ -2015,7 +2041,7 @@ async def main():
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        asyncio.run(TCPServer())
     except KeyboardInterrupt:
         pass
     except Exception as e:
