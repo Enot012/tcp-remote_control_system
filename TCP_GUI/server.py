@@ -50,6 +50,7 @@ import traceback
 
 from typing import Optional
 
+from TCP_server_v3_4 import ServerCmd
 from config import Config, ClientMsgParser
 from managers import (
     BanManager, CommandMonitor, ensure_dirs, FileTransfer,
@@ -177,19 +178,19 @@ async def _run_scheduled(client_id: str, writer: asyncio.StreamWriter,
     for cmd_data in user_cmds:
         try:
             idx      = all_commands.index(cmd_data)
-            cmd_type = cmd_data["command_type"]
+            cmd_type = cmd_data["command_type"].lower()
 
             def sub(text: str) -> str:
                 return sched_mgr.sub_path(text, client_id)
 
-            if cmd_type == "CMD":
+            if cmd_type == ServerCmd.CMD:
                 command = sub(cmd_data["command"])
                 state.register_command(client_id, command, "CMD", 1)
                 writer.write(f"CMD:{command}\n".encode())
                 await writer.drain()
                 state.push_scheduled(client_id, idx)
 
-            elif cmd_type == "SIMPL":
+            elif cmd_type == ServerCmd.SIMPL:
                 tmpl_type = cmd_data["template_type"]
                 commands = []
                 if tmpl_type == "default":
@@ -211,7 +212,7 @@ async def _run_scheduled(client_id: str, writer: asyncio.StreamWriter,
 
 
 
-            elif cmd_type == "IMPORT":
+            elif cmd_type == ServerCmd.IMPORT:
                 src = sub(cmd_data["source_path"])
                 dst = sub(cmd_data["dest_path"])
                 state.register_command(client_id, f"import {src}", "IMPORT", 1)
@@ -219,7 +220,7 @@ async def _run_scheduled(client_id: str, writer: asyncio.StreamWriter,
                 state.unregister_command(client_id)
                 sched_mgr.mark_done(idx, client_id, f"IMPORT: {src} → {dst} [OK]")
 
-            elif cmd_type == "EXPORT":
+            elif cmd_type == ServerCmd.EXPORT:
                 src = sub(cmd_data["source_path"])
                 dst = sub(cmd_data["dest_path"])
                 state.register_command(client_id, f"export {src}", "EXPORT", 1)

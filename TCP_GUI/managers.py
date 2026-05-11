@@ -63,8 +63,8 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Dict, Optional, Any
 
-from config import Config
-from test_to_OOP.TCP_server_v3_4 import ServerCmd
+from config import (Config, ServerCmd)
+
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -638,6 +638,7 @@ class ScheduledManager:
 
     def mark_done(self, cmd_index: int, username: str, output: str) -> bool:
         cmds = self._load().get("commands", [])
+
         if cmd_index >= len(cmds):
             return False
         cmd = cmds[cmd_index]
@@ -693,7 +694,7 @@ class TemplateManager:
                 with open(Config.FILE_TEMPLATE, "r", encoding="utf-8") as f:
                     self._cache = json.load(f)
             except Exception:
-                self._cache = {"default":""}
+                self._cache = {}
         return self._cache
 
     def _save(self) -> bool:

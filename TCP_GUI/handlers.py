@@ -41,7 +41,6 @@ import asyncio
 import json
 import time
 from pathlib import Path
-# from tempfile import template
 from typing import Callable, Dict, Optional
 
 from config import Config, ServerCmd, ClientMsg,CMD_HINTS
@@ -705,7 +704,8 @@ class ProtocolHandler:
             if received >= total:
                 Logger.log ("OUTPUT", f"все {total} команд выполнены", self._cid)
                 idx = self._state.pop_scheduled (self._cid)
-                self._sched.mark_done (idx, self._cid, combined)
+                if not idx is None:
+                    self._sched.mark_done (idx, self._cid, combined)
                 self._state.unregister_command (self._cid)
 
 

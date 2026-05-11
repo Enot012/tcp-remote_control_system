@@ -245,17 +245,13 @@ class OnlineDialog(tk.Toplevel):
     def _refresh_targets(self):
         """Обновляет список целей из текущего состояния сервера."""
         state = srv.get_state()
-        choices = ["all"]
-        if state:
-            choices += state.get_all_clients()
-
+        choices = ["all"] + state.get_all_clients() if state else ["none"]
         self._target_combo["values"] = choices
 
     def _refresh_templates(self):
         """Загружает список шаблонов из TemplateManager."""
         tmgr = srv.get_template_mgr ()  # нужно добавить геттер в server.py
-        names = ["default"] + tmgr.get_all_template_name () if tmgr else [""]
-
+        names = ["default"] + tmgr.get_all_template_name () if tmgr  else ["none"]
         self._simpl_template_cb["values"] = names
 
     def _bind_enter(self, *widgets):
