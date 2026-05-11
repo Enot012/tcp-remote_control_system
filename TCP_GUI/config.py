@@ -49,8 +49,9 @@ class Config:
     FILE_USERS     = BASE_DIR / "users.json"
     FILE_STATE     = BASE_DIR / "server_state.json"
     FILE_CRASH_LOG = BASE_DIR / "crash.log"
-    FILE_GROUPS    = BASE_DIR / "json" / "groups.json"
-    FILE_SCHEDULED = BASE_DIR / "json" / "scheduled_commands.json"
+    FILE_GROUPS    = DIR_JSON / "groups.json"
+    FILE_SCHEDULED = DIR_JSON / "scheduled_commands.json"
+    FILE_TEMPLATE  = DIR_JSON / "template_comd.json"
 
     HOST = "0.0.0.0"
     PORT = 9000
@@ -69,29 +70,34 @@ class Config:
 
 class ServerCmd(StrEnum):
     """Команды, вводимые администратором"""
-    CMD        = "cmd"
-    SIMPL      = "simpl"
-    EXPORT     = "export"
-    IMPORT     = "import"
-    SAVE       = "save"
-    LIST       = "list"
-    RENAME     = "rename"
-    STATUS     = "status"
-    CANCEL     = "cancel"
-    KICK       = "kick"
-    HELP       = "help"
-    EXIT       = "exit"
-    GROUP_NEW  = "group_new"
-    GROUP_LIST = "group_list"
-    GROUP_DEL  = "group_del"
-    GROUP_ADD  = "group_add"
-    GROUP_RM   = "group_rm"
-    CHART_NEW  = "chart_new"
-    CHART_LIST = "chart_list"
-    CHART_DEL  = "chart_del"
-    CHART_COMD = "chart_comd"
-    GROUP_EDIT = "chart_edit" # non-use
-
+    BATCH         = "batch"
+    CMD           = "cmd"
+    SIMPL         = "simpl"
+    EXPORT        = "export"
+    IMPORT        = "import"
+    SAVE          = "save"
+    LIST          = "list"
+    RENAME        = "rename"
+    STATUS        = "status"
+    CANCEL        = "cancel"
+    KICK          = "kick"
+    HELP          = "help"
+    EXIT          = "exit"
+    GROUP_NEW     = "group_new"
+    GROUP_LIST    = "group_list"
+    GROUP_DEL     = "group_del"
+    GROUP_ADD     = "group_add"
+    GROUP_RM      = "group_rm"
+    CHART_NEW     = "chart_new"
+    CHART_LIST    = "chart_list"
+    CHART_DEL     = "chart_del"
+    CHART_COMD    = "chart_comd"
+    GROUP_EDIT    = "chart_edit" # non-use
+    TEMPLATE_NEW  = "template_new"
+    TEMPLATE_ADD  = "template_add"
+    TEMPLATE_RM   = "template_rm"
+    TEMPLATE_DEL  = "template_del"
+    TEMPLATE_LIST = "template_list"
 
 class ClientMsg(StrEnum):
     """Протокольные сообщения от клиента"""
@@ -174,31 +180,37 @@ FONT_SMALL = ("Segoe UI", 9)
 # ── подсказка команд ───────────────────────────────────────────────────────
 s=ServerCmd
 CMD_HINTS = {
-    s.CMD:        "cmd <user> <команда>",
-    s.SIMPL:      "simpl <user>",
-    s.EXPORT:     "export <user> <path_cli> [path_serv]",
-    s.IMPORT:     "import <user> <path_serv> [path_cli]",
-    s.SAVE:       "save <user> <filename>",
-    s.LIST:       "list",
-    s.RENAME:     "rename <user> <alias>",
-    s.STATUS:     "status",
-    s.CANCEL:     "cancel <user>",
-    s.KICK:       "kick <user|all>",
-    s.GROUP_NEW:  "group_new <name> [user1 user2 ...]",
-    s.GROUP_LIST: "group_list",
-    s.GROUP_DEL:  "group_del <name>",
-    s.GROUP_ADD:  "group_add <group> <user1> [user2 ...]",
-    s.GROUP_RM:   "group_rm <group> <user1> [user2 ...]",
-    s.CHART_NEW:  "chart_new <type> <user> [args...]",
-    s.CHART_LIST: "chart_list",
-    s.CHART_DEL:  "chart_del <index>",
-    s.CHART_COMD: "chart_comd",
-    s.EXIT:       "exit",
-    s.HELP:       "help",
+    s.CMD:           "cmd <user> <comd1, comd2 ...>",
+    s.BATCH:         "batch <user> <commands>",
+    s.SIMPL:         "simpl <user> [template_name]",
+    s.EXPORT:        "export <user> <path_cli> [path_serv]",
+    s.IMPORT:        "import <user> <path_serv> [path_cli]",
+    s.SAVE:          "save <user> <filename>",
+    s.LIST:          "list",
+    s.RENAME:        "rename <user> <alias>",
+    s.STATUS:        "status",
+    s.CANCEL:        "cancel <user>",
+    s.KICK:          "kick <user|all>",
+    s.GROUP_NEW:     "group_new <name> [user1 user2 ...]",
+    s.GROUP_LIST:    "group_list",
+    s.GROUP_DEL:     "group_del <name>",
+    s.GROUP_ADD:     "group_add <group> <user1> [user2 ...]",
+    s.GROUP_RM:      "group_rm <group> <user1> [user2 ...]",
+    s.CHART_NEW:     "chart_new <type> <user> [args...]",
+    s.CHART_LIST:    "chart_list",
+    s.CHART_DEL:     "chart_del <index>",
+    s.CHART_COMD:    "chart_comd",
+    s.TEMPLATE_NEW:  "template_new <name> <commands>",
+    s.TEMPLATE_ADD:  "template_add <name> <commands>",
+    s.TEMPLATE_RM:   "template_rm <name> <indexes>",
+    s.TEMPLATE_DEL:  "template_del <index>",
+    s.TEMPLATE_LIST: "template_list ",
+    s.EXIT:          "exit",
+    s.HELP:          "help",
 }
 
 
-FLAGS = [ServerCmd.CMD, ServerCmd.SIMPL, ServerCmd.EXPORT, ServerCmd.IMPORT]
+FLAGS = [ServerCmd.CMD, ServerCmd.BATCH, ServerCmd.SIMPL, ServerCmd.EXPORT, ServerCmd.IMPORT]
 
 # ── палитра ────────────────────────────────────────────────────────────────
 COLORS = {
@@ -222,7 +234,11 @@ COLORS = {
     ServerCmd.EXPORT: "#534AB7",
     ServerCmd.GROUP_NEW: "#1D9E75",
     ServerCmd.GROUP_EDIT: "#7C6AF7",
-    ServerCmd.GROUP_DEL: "#D85A30"
+    ServerCmd.GROUP_DEL: "#D85A30",
+    ServerCmd.BATCH: "#185FA5",
+    ServerCmd.TEMPLATE_NEW: "#1D9E75",
+    ServerCmd.TEMPLATE_ADD: "#7C6AF7",
+    ServerCmd.TEMPLATE_DEL: "#D85A30"
 }
 
 

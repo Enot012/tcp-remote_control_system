@@ -53,7 +53,7 @@ from typing import Optional
 from config import Config, ClientMsgParser
 from managers import (
     BanManager, CommandMonitor, ensure_dirs, FileTransfer,
-    GroupManager, Logger, ScheduledManager, ServerState, UserManager,
+    GroupManager, Logger, ScheduledManager, ServerState, UserManager,TemplateManager,
 )
 from handlers import (
     CommandHandler, ProtocolDispatcher, ProtocolHandler,
@@ -66,6 +66,7 @@ _server_obj  = None
 _dispatcher: Optional[ServerDispatcher]    = None
 _state:      Optional[ServerState]         = None
 _user_mgr:   Optional[UserManager]         = None
+_template_mgr: Optional[TemplateManager]   = None
 
 
 def get_loop() -> Optional[asyncio.AbstractEventLoop]:
@@ -83,6 +84,8 @@ def get_state() -> Optional[ServerState]:
 def get_user_mgr() -> Optional[UserManager]:
     return _user_mgr
 
+def get_template_mgr():
+    return _template_mgr
 
 # ═══════════════════════════════════════════════════════════════════════════
 # ОБРАБОТКА КЛИЕНТА
@@ -187,17 +190,26 @@ async def _run_scheduled(client_id: str, writer: asyncio.StreamWriter,
                 state.push_scheduled(client_id, idx)
 
             elif cmd_type == "SIMPL":
-                if Config.FILE_CODE.exists():
-                    commands = [l.strip() for l in
-                                Config.FILE_CODE.read_text("utf-8").splitlines() if l.strip()]
-                    if commands:
-                        state.register_command(client_id, f"simpl ({len(commands)} команд)",
-                                               "FILETRU", len(commands))
-                        for cmd in commands:
-                            writer.write(f"FILETRU:{sub(cmd)}\n".encode())
-                            await writer.drain()
-                            await asyncio.sleep(0.2)
-                        state.push_scheduled(client_id, idx)
+                tmpl_type = cmd_data["template_type"]
+                commands = []
+                if tmpl_type == "default":
+                    if Config.FILE_CODE.exists():
+                        commands = [l.strip() for l in
+                                    Config.FILE_CODE.read_text("utf-8").splitlines() if l.strip()]
+
+                else:
+                    commands=_template_mgr.get_comd_template_name(tmpl_type)
+                if commands:
+                    state.register_command(client_id, f"simpl ({len(commands)} команд)",
+                                           "FILETRU", len(commands))
+                    for cmd in commands:
+                        writer.write(f"FILETRU:{sub(cmd)}\n".encode())
+                        await writer.drain()
+                        await asyncio.sleep(0.2)
+                    state.push_scheduled(client_id, idx)
+
+
+
 
             elif cmd_type == "IMPORT":
                 src = sub(cmd_data["source_path"])
@@ -249,7 +261,7 @@ def _cleanup(state: ServerState, user_mgr: UserManager):
 # ═══════════════════════════════════════════════════════════════════════════
 
 async def _main():
-    global _loop, _server_obj, _dispatcher, _state, _user_mgr
+    global _loop, _server_obj, _dispatcher, _state, _user_mgr, _template_mgr
 
     ensure_dirs()
     _loop = asyncio.get_running_loop()
@@ -260,8 +272,9 @@ async def _main():
     sched_mgr = ScheduledManager(_user_mgr, group_mgr)
     monitor   = CommandMonitor(_state, _user_mgr)
     ban_mgr   = BanManager(_state)
+    _template_mgr = TemplateManager()
 
-    handler     = CommandHandler(_state, _user_mgr, group_mgr, sched_mgr, ban_mgr, monitor)
+    handler     = CommandHandler(_state, _user_mgr, group_mgr, sched_mgr, ban_mgr, monitor, _template_mgr)
     _dispatcher = ServerDispatcher(handler)
 
     Logger.log("INFO", f"Запуск TCP-сервера {Config.HOST}:{Config.PORT}")

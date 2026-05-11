@@ -41,13 +41,14 @@ import asyncio
 import json
 import time
 from pathlib import Path
+# from tempfile import template
 from typing import Callable, Dict, Optional
 
-from config import Config, ServerCmd, ClientMsg
+from config import Config, ServerCmd, ClientMsg,CMD_HINTS
 from managers import (
     BanManager, CommandMonitor, FileTransfer,
     GroupManager, Logger, ScheduledManager,
-    ServerState, UserManager,
+    ServerState, UserManager, TemplateManager
 )
 
 
@@ -77,13 +78,14 @@ class CommandHandler:
 
     def __init__(self, state: ServerState, user_mgr: UserManager,
                  group_mgr: GroupManager, sched_mgr: ScheduledManager,
-                 ban_mgr: BanManager, monitor: CommandMonitor):
+                 ban_mgr: BanManager, monitor: CommandMonitor, template: TemplateManager):
         self._state     = state
         self._user_mgr  = user_mgr
         self._group_mgr = group_mgr
         self._sched_mgr = sched_mgr
         self._ban_mgr   = ban_mgr
         self._monitor   = monitor
+        self._template  = template
 
     # ── helpers ──────────────────────────────────────────────────────────
 
@@ -106,6 +108,7 @@ class CommandHandler:
         return [real] if real and self._state.is_connected(real) else []
 
     def _sub(self, text: str, cid: str) -> str:
+        """Вставляет плесхолдеры"""
         return self._sched_mgr.sub_path(text, cid)
 
     async def _drain(self, cid: str):
@@ -120,14 +123,50 @@ class CommandHandler:
             await self._drain(cid)
             await asyncio.sleep(0.2)
 
-    def _read_code_file(self) -> list:
+    @staticmethod
+    def _read_code_file() -> list:
         try:
             return [l.strip() for l in Config.FILE_CODE.read_text("utf-8").splitlines() if l.strip()]
         except FileNotFoundError:
             Logger.log("ERROR", f"Файл {Config.FILE_CODE} не найден")
             return []
 
+    def check_templ(self,name) -> bool:
+        """Возвращает True если в шаблоне нету команд. Удаляет шаблон"""
+        if len(self._template.get_comd_template_name(name)) <= 0:
+            self._template.delete(name)
+            Logger.log("CMD",f"Шаблон '{name}' удален. Шаблон пуст. ")
+            return True
+        return False
+
+    def check_group(self, name) ->bool:
+        """Возвращает True если в группе нету пользователей. Удаляет группу"""
+        if len(self._group_mgr.get_members(name)) <= 0:
+            self._group_mgr.delete(name)
+            Logger.log ("CMD", f"Группа '{name}' удалена. Группа пуста. ")
+            return True
+        return False
+
+
     # ── онлайн-команды ────────────────────────────────────────────────────
+
+    async def batch(self, args: list) -> str:
+        """
+        Мульти-cmd, принимает больше одной команды
+        args: [target, comd1, comd2 ...]
+        """
+
+        if len (args) < 2:
+            return f"Формат: {CMD_HINTS.get (ServerCmd.BATCH, 'Формат не найден!')}"
+        target = args[0]
+        commands = args[1:]
+        users = self._targets (target)
+        if not users:
+            return "Нет подключённых пользователей"
+        for u in users:
+            await self._send_simpl (u, commands)
+        return f"BATCH ({len (commands)} команд) → {target}"
+
 
     async def cmd(self, args: list) -> str:
         """
@@ -135,7 +174,7 @@ class CommandHandler:
         Пример: ["user1", "ls", "-la"]
         """
         if len(args) < 2:
-            return "Формат: cmd <target> <команда>"
+            return f"Формат: {CMD_HINTS.get(ServerCmd.CMD,'Формат не найден!')}"
         target, command = args[0], " ".join(args[1:])
         if not self._resolve(target):
             return f"Пользователь/группа '{target}' не найден"
@@ -149,26 +188,36 @@ class CommandHandler:
             await self._drain(cid)
         return f"CMD → {target} ({len(users)} польз.)"
 
+
     async def simpl(self, args: list) -> str:
-        """args: [target]"""
+        """args: [target, template_name?]"""
         if not args:
-            return "Формат: simpl <target>"
-        if not self._resolve(args[0]):
-            return f"'{args[0]}' не найден"
-        commands = self._read_code_file()
-        if not commands:
-            return "Файл code.txt пуст или не найден"
-        users = self._targets(args[0])
+            return f"Формат: {CMD_HINTS.get (ServerCmd.SIMPL, 'Формат не найден!')}"
+
+        target = args[0]
+        if not self._resolve (target):
+            return f"'{target}' не найден"
+
+        # определяем откуда брать команды
+        if len (args) > 1 and (template_name := args[1] if self._template.check_template_name(args[1]) else ''):
+            commands = self._template.get_comd_template_name (template_name)
+        else:
+            commands = self._read_code_file ()
+            if not commands:
+                return "Файл code.txt пуст или не найден"
+
+        users = self._targets (target)
         if not users:
             return "Нет подключённых пользователей"
         for cid in users:
-            await self._send_simpl(cid, commands)
-        return f"SIMPL ({len(commands)} команд) → {args[0]}"
+            await self._send_simpl (cid, commands)
+
+        return f"SIMPL ({len (commands)} команд) → {target}"
 
     async def export(self, args: list) -> str:
         """args: [target, src_path, dest_path?]"""
         if len(args) < 2:
-            return "Формат: export <target> <path_client> [path_server]"
+            return f"Формат: {CMD_HINTS.get(ServerCmd.EXPORT,'Формат не найден!')}"
         users = self._targets(args[0])
         if not users:
             return "Нет подключённых пользователей"
@@ -183,7 +232,7 @@ class CommandHandler:
     async def import_(self, args: list) -> str:
         """args: [target, src_server, dest_client?]"""
         if len(args) < 2:
-            return "Формат: import <target> <path_server> [path_client]"
+            return f"Формат: {CMD_HINTS.get(ServerCmd.IMPORT,'Формат не найден!')}"
         target = args[0]
         src    = self._sched_mgr.sub_serv_path(args[1])
         dst    = args[2] if len(args) > 2 else "received"
@@ -202,7 +251,7 @@ class CommandHandler:
     async def save(self, args: list) -> str:
         """args: [target, filename]"""
         if len(args) < 2:
-            return "Формат: save <target> <filename>"
+            return f"Формат: {CMD_HINTS.get(ServerCmd.SAVE,'Формат не найден!')}"
         target, filename = args[0], args[1]
         now     = time.strftime("%Y-%m-%d %H:%M:%S")
         targets = self._state.get_all_clients() if target == "all" else [target]
@@ -251,7 +300,7 @@ class CommandHandler:
     def rename(self, args: list) -> str:
         """args: [target, new_alias]"""
         if len(args) < 2:
-            return "Формат: rename <user> <alias>"
+            return f"Формат: {CMD_HINTS.get(ServerCmd.RENAME,'Формат не найден!')}"
         target, new_alias = args[0], args[1][:10].replace(" ", "_")
         found = self._resolve(target)
         if not found or found in ("all",) or found.startswith("group:"):
@@ -278,7 +327,7 @@ class CommandHandler:
     async def cancel(self, args: list) -> str:
         """args: [target]"""
         if not args:
-            return "Формат: cancel <client>"
+            return f"Формат: {CMD_HINTS.get(ServerCmd.CANCEL,'Формат не найден!')}"
         target = args[0]
         if self._state.has_command(target):
             writer = self._state.get_writer(target)
@@ -292,7 +341,7 @@ class CommandHandler:
     async def kick(self, args: list) -> str:
         """args: [target]  target = username | 'all'"""
         if not args:
-            return "Формат: kick <client|all>"
+            return f"Формат: {CMD_HINTS.get(ServerCmd.KICK,'Формат не найден!')}"
         target = args[0]
         if target == "all":
             n = 0
@@ -314,7 +363,7 @@ class CommandHandler:
         GUI сам собирает список пользователей и передаёт здесь.
         """
         if len(args) < 1:
-            return "Формат: group_new <name> [user1 user2 ...]"
+            return f"Формат: {CMD_HINTS.get(ServerCmd.GROUP_NEW,'Формат не найден!')}"
         name    = args[0]
         members = args[1:]
         # Валидируем каждого пользователя
@@ -346,7 +395,7 @@ class CommandHandler:
 
     def group_del(self, args: list) -> str:
         if not args:
-            return "Формат: group_del <name>"
+            return f"Формат: {CMD_HINTS.get(ServerCmd.GROUP_DEL,'Формат не найден!')}"
         try:
             self._group_mgr.delete(args[0])
             return f"Группа '{args[0]}' удалена"
@@ -356,7 +405,7 @@ class CommandHandler:
     def group_add(self, args: list) -> str:
         """args: [group_name, user1, user2, ...]"""
         if len(args) < 2:
-            return "Формат: group_add <group> <user1> [user2 ...]"
+            return f"Формат: {CMD_HINTS.get(ServerCmd.GROUP_ADD,'Формат не найден!')}"
         name, users = args[0], args[1:]
         resolved = []
         unknown  = []
@@ -377,12 +426,14 @@ class CommandHandler:
 
     def group_rm(self, args: list) -> str:
         """args: [group_name, user1, user2, ...]"""
-        if len(args) < 2:
-            return "Формат: group_rm <group> <user1> [user2 ...]"
+        if len(args) < 1:
+            return f"Формат: {CMD_HINTS.get(ServerCmd.GROUP_RM,'Формат не найден!')}"
         name, users = args[0], args[1:]
         try:
             skipped = self._group_mgr.remove_users(name, users)
             done = len(users) - len(skipped)
+            if self.check_group(name):
+                return
             return f"Удалено: {done}. Не найдено: {skipped}"
         except Exception as e:
             return f"Ошибка: {e}"
@@ -398,23 +449,25 @@ class CommandHandler:
           EXPORT: ["export", target, src, dst?]
         """
         if len(args) < 2:
-            return "Недостаточно аргументов"
+            return f"Формат: {CMD_HINTS.get(ServerCmd.CHART_NEW,'Формат не найден!')}"
         cmd_type = args[0].lower()
         target   = args[1]
-
+        template = args[2]
         extra: dict = {}
-        if cmd_type == "cmd":
+        if cmd_type == ServerCmd.CMD:
             if len(args) < 3:
                 return "CMD требует команду"
             extra = {"command": " ".join(args[2:])}
-        elif cmd_type == "simpl":
-            extra = {}
-        elif cmd_type in ("import", "export"):
+        elif cmd_type == ServerCmd.SIMPL:
+            if template:
+                extra = {"template_type": template}
+
+        elif cmd_type in (ServerCmd.IMPORT, ServerCmd.EXPORT):
             if len(args) < 4:
                 return f"{cmd_type.upper()} требует src и dst"
             extra = {"source_path": args[2], "dest_path": args[3]}
         else:
-            return f"Неверный тип '{cmd_type}'. Допустимые: cmd/simpl/import/export"
+            return f"Неверный тип '{cmd_type}'. Допустимые: {', '.join([ServerCmd.CMD, ServerCmd.SIMPL, ServerCmd.IMPORT, ServerCmd.EXPORT])}"
 
         try:
             self._sched_mgr.create(target, cmd_type, extra)
@@ -437,7 +490,7 @@ class CommandHandler:
 
     def chart_del(self, args: list) -> str:
         if not args:
-            return "Формат: chart_del <index>"
+            return f"Формат: {CMD_HINTS.get(ServerCmd.CHART_DEL,'Формат не найден!')}"
         try:
             self._sched_mgr.delete(int(args[0]))
             return f"Команда [{args[0]}] удалена"
@@ -464,6 +517,70 @@ class CommandHandler:
                 lines.append(f"    ⏳ {u}")
         return "\n".join(lines)
 
+    # ── шаблоны команд ────────────────────────────────────────────────
+
+    def template_new(self, args: list) -> str:
+        """args[templ_name comd1 comd2 ...]"""
+        if len(args)<2:
+            return f"Формат: {CMD_HINTS.get(ServerCmd.TEMPLATE_NEW,'Формат не найден!')}"
+        templ_name=args[0]
+        templ_comd=args[1:]
+        try:
+            self._template.create (templ_name, templ_comd)
+            return f"Шалблон '{templ_name}' создан с {len (templ_comd)} командами \n{','.join (templ_comd)}"
+        except Exception as e:
+            return f"Ошибка: {e}"
+
+    def template_add(self, args: list) -> str:
+        """args[templ_name new_comd1 new_comd2 ...]"""
+        if len(args)<2:
+            return f"Формат: {CMD_HINTS.get(ServerCmd.TEMPLATE_ADD,'Формат не найден!')}"
+        templ_name=args[0]
+        templ_comd=args[1:]
+        try:
+            skip=self._template.add_comd(templ_name,templ_comd)
+            add=len(templ_comd)-len(skip)
+            return f"В шаблон '{templ_name}' добавлено: {add}/{len(templ_comd)} команд \nпропущено:{','.join(skip)}"
+        except Exception as e:
+            return f"Ошибка: {e}"
+
+    def template_rm(self, args: list) -> str:
+        """args[templ_name index1 index2 ...]"""
+        if len(args)<2:
+            return f"Формат: {CMD_HINTS.get(ServerCmd.TEMPLATE_RM,'Формат не найден!')}"
+        templ_name=args[0]
+        templ_comd=args[1:]
+        try:
+            add=self._template.rm_comd(templ_name,templ_comd)
+            if add==len(templ_comd):
+                if self.check_templ(templ_name):
+                    return
+                return f"Из шаблона '{templ_name}' удалены команды!"
+            else:
+                return f"Из шаблона '{templ_name}' удалено: {add}/{len(templ_comd)} команд"
+        except Exception as e:
+            return f"Ошибка: {e}"
+
+    def template_del(self, args: list) -> str:
+        """args[templ_name comd]"""
+        if not args:
+            return f"Формат: {CMD_HINTS.get(ServerCmd.TEMPLATE_DEL,'Формат не найден!')}"
+
+        try:
+            self._template.delete(args[0])
+            return f"Шаблон '{args[0]}' удален"
+        except Exception as e:
+            return f"Ошибка: {e}"
+
+    def template_list(self, args: list) -> str:
+        info =self._template.list_all_templte()
+        if not info:
+            return "Нет шаблонов"
+        else:
+            return info
+
+
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # ДИСПЕТЧЕР СЕРВЕРНЫХ КОМАНД
@@ -475,26 +592,34 @@ class ServerDispatcher:
     def __init__(self, handler: CommandHandler):
         h = handler
         s = _sync_to_async
+        c = ServerCmd
         self._map: Dict[ServerCmd, Callable] = {
-            ServerCmd.CMD:        h.cmd,
-            ServerCmd.SIMPL:      h.simpl,
-            ServerCmd.EXPORT:     h.export,
-            ServerCmd.IMPORT:     h.import_,
-            ServerCmd.SAVE:       h.save,
-            ServerCmd.LIST:       s(h.list_users),
-            ServerCmd.RENAME:     s(h.rename),
-            ServerCmd.STATUS:     s(h.status),
-            ServerCmd.CANCEL:     h.cancel,
-            ServerCmd.KICK:       h.kick,
-            ServerCmd.GROUP_NEW:  s(h.group_new),
-            ServerCmd.GROUP_LIST: s(h.group_list),
-            ServerCmd.GROUP_DEL:  s(h.group_del),
-            ServerCmd.GROUP_ADD:  s(h.group_add),
-            ServerCmd.GROUP_RM:   s(h.group_rm),
-            ServerCmd.CHART_NEW:  s(h.chart_new),
-            ServerCmd.CHART_LIST: s(h.chart_list),
-            ServerCmd.CHART_DEL:  s(h.chart_del),
-            ServerCmd.CHART_COMD: s(h.chart_comd),
+            c.BATCH:         h.batch,
+            c.CMD:           h.cmd,
+            c.SIMPL:         h.simpl,
+            c.EXPORT:        h.export,
+            c.IMPORT:        h.import_,
+            c.SAVE:          h.save,
+            c.LIST:          s(h.list_users),
+            c.RENAME:        s(h.rename),
+            c.STATUS:        s(h.status),
+            c.CANCEL:        h.cancel,
+            c.KICK:          h.kick,
+            c.GROUP_NEW:     s(h.group_new),
+            c.GROUP_LIST:    s(h.group_list),
+            c.GROUP_DEL:     s(h.group_del),
+            c.GROUP_ADD:     s(h.group_add),
+            c.GROUP_RM:      s(h.group_rm),
+            c.CHART_NEW:     s(h.chart_new),
+            c.CHART_LIST:    s(h.chart_list),
+            c.CHART_DEL:     s(h.chart_del),
+            c.CHART_COMD:    s(h.chart_comd),
+            c.TEMPLATE_NEW:  s(h.template_new),
+            c.TEMPLATE_ADD:  s(h.template_add),
+            c.TEMPLATE_RM:   s(h.template_rm),
+            c.TEMPLATE_DEL:  s(h.template_del),
+            c.TEMPLATE_LIST: s(h.template_list)
+
         }
 
     async def dispatch(self, cmd: ServerCmd, args: list) -> str:
@@ -579,9 +704,10 @@ class ProtocolHandler:
             Logger.log ("OUTPUT", f"[{received}/{total}] → {combined}", self._cid)
             if received >= total:
                 Logger.log ("OUTPUT", f"все {total} команд выполнены", self._cid)
-                # idx = self._state.pop_scheduled (self._cid)
-                # self._sched.mark_done (idx, self._cid, combined)
+                idx = self._state.pop_scheduled (self._cid)
+                self._sched.mark_done (idx, self._cid, combined)
                 self._state.unregister_command (self._cid)
+
 
     async def on_export_start(self, payload: str, reader: asyncio.StreamReader):
         try:

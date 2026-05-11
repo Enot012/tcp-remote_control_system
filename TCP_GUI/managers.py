@@ -64,6 +64,7 @@ from pathlib import Path
 from typing import Dict, Optional, Any
 
 from config import Config
+from test_to_OOP.TCP_server_v3_4 import ServerCmd
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -497,21 +498,19 @@ class GroupManager:
         return [u for u in members if self._state.is_connected(u)]
 
     def create(self, group_name: str, members: list) -> bool:
-        groups = self.get_data()
+        groups = self._load()
         if group_name in groups:
             raise ValueError(f"Группа '{group_name}' уже существует")
         groups[group_name] = members
-        self._cache = groups
         self._sync_users(group_name, members, add=True)
         return self._save()
 
     def delete(self, group_name: str) -> bool:
-        groups = self.get_data()
+        groups = self._load()
         if group_name not in groups:
             raise NameError(f"Группа '{group_name}' не найдена")
         self._sync_users(group_name, groups[group_name], add=False)
         del groups[group_name]
-        self._cache = groups
         return self._save()
 
     def add_users(self, group_name: str, users: list) -> list:
@@ -548,7 +547,7 @@ class GroupManager:
 
 class ScheduledManager:
 
-    VALID_TYPES = {"cmd", "simpl", "import", "export"}
+    VALID_TYPES = {ServerCmd.CMD, ServerCmd.SIMPL, ServerCmd.IMPORT, ServerCmd.EXPORT}
 
     def __init__(self, user_mgr: UserManager, group_mgr: GroupManager):
         self._cache:     Optional[Dict] = None
@@ -607,9 +606,9 @@ class ScheduledManager:
         cmd_type = cmd_type.lower()
         if cmd_type not in self.VALID_TYPES:
             raise ValueError(f"Неверный тип: {cmd_type}")
-        if cmd_type == "cmd" and "command" not in extra:
+        if cmd_type == ServerCmd.CMD and "command" not in extra:
             raise ValueError("CMD требует поле 'command'")
-        if cmd_type in ("import", "export") and \
+        if cmd_type in (ServerCmd.IMPORT, ServerCmd.EXPORT) and \
                 not {"source_path", "dest_path"}.issubset(extra):
             raise ValueError("IMPORT/EXPORT требуют 'source_path' и 'dest_path'")
 
@@ -679,7 +678,102 @@ class ScheduledManager:
         if "{path_serv}" in text:
             return str(Path(text.replace("{path_serv}", str(Config.DIR_FOR_SEND.resolve()))))
         return text
+# ═══════════════════════════════════════════════════════════════════════════
+# Списки команд
+# ═══════════════════════════════════════════════════════════════════════════
 
+class TemplateManager:
+
+    def __init__(self):
+        self._cache = None
+
+    def _load(self) -> Dict:
+        if self._cache is None:
+            try:
+                with open(Config.FILE_TEMPLATE, "r", encoding="utf-8") as f:
+                    self._cache = json.load(f)
+            except Exception:
+                self._cache = {"default":""}
+        return self._cache
+
+    def _save(self) -> bool:
+        if self._cache is None:
+            return False
+        try:
+            tmp = Config.FILE_TEMPLATE.with_suffix(".tmp")
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(self._cache, f, ensure_ascii=False, indent=2)
+            tmp.replace(Config.FILE_TEMPLATE)
+            return True
+        except Exception as e:
+            Logger.log("ERROR", f"Ошибка сохранения шаблонных команд: {e}")
+            self._cache = None
+            return False
+    def get_all_template_name(self) -> list:
+        return list(self._load().keys())
+
+    def get_comd_template_name(self,name)->list:
+            return self._load().get(name,[])
+
+    def check_template_name(self,name) -> bool:
+        return name in self.get_all_template_name()
+
+    def create(self, name: str, commands: list) -> bool:
+        if name in self.get_all_template_name():
+            raise NameError(f" Имя '{name}' уже используется")
+        if not isinstance(commands,list):
+            raise TypeError("Команды должны быть типом list")
+        self._load()[name]=commands
+        return self._save()
+
+    def add_comd(self, name: str, commands: list) -> list:
+        if name not in self.get_all_template_name():
+            raise NameError(f"Имя '{name}' не найдено")
+
+        if not isinstance(commands,list):
+            raise TypeError("Команды должны быть списком")
+
+        command = self.get_comd_template_name (name)
+        skipped=[]
+        for c in commands:
+            if c in command:
+                skipped.append(c)
+            else:
+                command.append(c)
+
+        self._save()
+        return skipped
+
+    def rm_comd(self, name: str, indices: list) -> str:
+        data = self._load ()
+        if name not in data:
+            raise KeyError(f"Шаблон '{name}' не найден")
+        try:
+            indexes = [int (i) for i in indices]
+        except ValueError:
+            return "Индексы должны быть числами"
+        commands = data[name]
+        data[name] = [cmd for i, cmd in enumerate (commands) if i not in set (indexes)]
+        self._save ()
+
+        return len (indexes)
+
+    def delete(self, name: str) -> bool:
+        data = self._load ()
+        if name not in data:
+            raise KeyError(f"Шаблон '{name}' не найден")
+        del data[name]
+        return self._save()
+
+    def list_all_templte(self) -> str:
+        data=self._load()
+        if not data:
+            return "Нет шаблонов"
+        lines = []
+        for name,comd in self._load().items():
+            lines.append(f"Шалоны: {len(data.keys())}")
+            lines.append(f"{name} -> {','.join(comd)} ")
+        return "\n".join(lines)
 
 # ═══════════════════════════════════════════════════════════════════════════
 # КИК

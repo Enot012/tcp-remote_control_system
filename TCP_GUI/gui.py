@@ -57,7 +57,7 @@ from tkinter import messagebox, scrolledtext, ttk
 
 import json
 import server as srv
-from config import (Config,ServerCmd, COLORS, FLAGS, CMD_HINTS,
+from config import (Config,ServerCmd, COLORS, CMD_HINTS,
                     FONT_MONO_S, FONT_MONO, FONT_UI, FONT_UI_B, FONT_SMALL, ServerCmdParser)
 from managers import Logger, set_log_callback
 
@@ -72,7 +72,7 @@ class OnlineDialog(tk.Toplevel):
     Флаги: CMD | SIMPL | EXPORT | IMPORT
     Поля меняются в зависимости от выбранного флага.
     """
-
+    FLAGS = [ServerCmd.CMD, ServerCmd.BATCH, ServerCmd.SIMPL, ServerCmd.EXPORT, ServerCmd.IMPORT]
     def __init__(self, parent, app: "ServerApp"):
         super().__init__(parent)
         self._app = app
@@ -114,7 +114,7 @@ class OnlineDialog(tk.Toplevel):
         tk.Label(flag_frame, text="Тип:", bg=COLORS["bg"],
                  fg=COLORS["text_dim"], font=FONT_SMALL).pack(side="left", padx=(0, 8))
         self._flag_btns = {}
-        for f in FLAGS:
+        for f in self.FLAGS:
             btn = tk.Button(
                 flag_frame, text=f, font=FONT_SMALL, relief="flat", bd=0,
                 padx=10, pady=3, cursor="hand2",
@@ -139,6 +139,7 @@ class OnlineDialog(tk.Toplevel):
         self._fields_frame.pack(fill="x", padx=14)
 
         self._cmd_frame    = self._build_cmd_fields()
+        self._batch_frame = self._build_batch_fields ()
         self._simpl_frame  = self._build_simpl_fields()
         self._export_frame = self._build_path_fields("Путь на клиенте", "Путь на сервере (необяз.)")
         self._import_frame = self._build_path_fields("Путь на сервере", "Путь на клиенте (необяз.)")
@@ -164,12 +165,40 @@ class OnlineDialog(tk.Toplevel):
         self._cmd_entry.pack(fill="x")
         return f
 
+    def _build_batch_fields(self):
+        """Строит поле для флага BATCH — многострочный Text, каждая строка = команда."""
+        f = tk.Frame (self._fields_frame, bg=COLORS["bg"])
+        self._label (f, "Команды (каждая с новой строки)").pack (anchor="w", pady=(6, 1))
+        self._batch_text = tk.Text (
+            f, bg=COLORS["input_bg"], fg=COLORS["text"],
+            insertbackground=COLORS["text"], relief="flat",
+            font=FONT_MONO_S, width=46, height=8,
+            wrap="none",
+        )
+        self._batch_text.pack (fill="x")
+        # скроллбар
+        sb = tk.Scrollbar (f, command=self._batch_text.yview)
+        sb.pack (side="right", fill="y")
+        self._batch_text.configure (yscrollcommand=sb.set)
+        return f
+
     def _build_simpl_fields(self):
-        """Строит поля для флага SIMPL (просто информационный текст)."""
-        f = tk.Frame(self._fields_frame, bg=COLORS["bg"])
-        tk.Label(f, text="Выполнит все строки из code.txt",
-                 bg=COLORS["bg"], fg=COLORS["text_dim"],
-                 font=FONT_SMALL, pady=10).pack()
+        """Строит поля для флага SIMPL — инфо + список доступных шаблонов."""
+        f = tk.Frame (self._fields_frame, bg=COLORS["bg"])
+        tk.Label (f, text="Выполнит все строки из code.txt",
+                  bg=COLORS["bg"], fg=COLORS["text_dim"],
+                  font=FONT_SMALL, pady=6).pack ()
+
+        self._label (f, "Или выберите шаблон (необязательно)").pack (anchor="w", pady=(4, 1))
+        self._simpl_template_var = tk.StringVar ()
+        self._simpl_template_cb = ttk.Combobox (
+            f, textvariable=self._simpl_template_var,
+            font=FONT_MONO_S, width=35, state="readonly",
+        )
+
+        self._simpl_template_cb.pack (fill="x", pady=(0, 4))
+        self._refresh_templates ()
+        self._simpl_template_cb.bind ("<Button-1>", lambda e: self._refresh_templates ())
         return f
 
     def _build_path_fields(self, label1: str, label2: str):
@@ -202,15 +231,16 @@ class OnlineDialog(tk.Toplevel):
             else:
                 btn.configure(bg=COLORS["panel"], fg=COLORS["text_dim"])
 
-        for frame in (self._cmd_frame, self._simpl_frame,
+        for frame in (self._cmd_frame, self._batch_frame, self._simpl_frame,
                       self._export_frame, self._import_frame):
-            frame.pack_forget()
+            frame.pack_forget ()
         {
-            ServerCmd.CMD:    self._cmd_frame,
-            ServerCmd.SIMPL:  self._simpl_frame,
+            ServerCmd.CMD: self._cmd_frame,
+            ServerCmd.BATCH: self._batch_frame,
+            ServerCmd.SIMPL: self._simpl_frame,
             ServerCmd.EXPORT: self._export_frame,
             ServerCmd.IMPORT: self._import_frame,
-        }[flag].pack(fill="x")
+        }[flag].pack (fill="x")
 
     def _refresh_targets(self):
         """Обновляет список целей из текущего состояния сервера."""
@@ -220,6 +250,13 @@ class OnlineDialog(tk.Toplevel):
             choices += state.get_all_clients()
 
         self._target_combo["values"] = choices
+
+    def _refresh_templates(self):
+        """Загружает список шаблонов из TemplateManager."""
+        tmgr = srv.get_template_mgr ()  # нужно добавить геттер в server.py
+        names = ["default"] + tmgr.get_all_template_name () if tmgr else [""]
+
+        self._simpl_template_cb["values"] = names
 
     def _bind_enter(self, *widgets):
         """Привязывает Enter → _submit ко всем переданным виджетам и самому окну."""
@@ -243,8 +280,19 @@ class OnlineDialog(tk.Toplevel):
             args = [target] + cmd.split()
             self._app.dispatch(ServerCmd.CMD, args)
 
+        elif flag == ServerCmd.BATCH:
+            raw = self._batch_text.get ("1.0", "end").strip ()
+            if not raw:
+                messagebox.showerror ("Ошибка", "Введите хотя бы одну команду", parent=self)
+                return
+            commands = [line.strip () for line in raw.splitlines () if line.strip ()]
+            self._app.dispatch (ServerCmd.BATCH, [target] + commands)
+
         elif flag == ServerCmd.SIMPL:
-            self._app.dispatch(ServerCmd.SIMPL, [target])
+            # self._app.dispatch(ServerCmd.SIMPL, [target])
+            template = self._simpl_template_var.get ().strip ()
+            args = [target] + ([template] if template else [])
+            self._app.dispatch (ServerCmd.SIMPL, args)
 
         elif flag == ServerCmd.EXPORT:
             e1, e2 = self._path_entries["Пут"]
@@ -283,7 +331,7 @@ class ScheduledDialog(tk.Toplevel):
     Кнопка «Отложенная» в CommandBar.
     Поля меняются по флагу CMD / SIMPL / EXPORT / IMPORT.
     """
-
+    FLAGS = [ServerCmd.CMD, ServerCmd.SIMPL, ServerCmd.EXPORT, ServerCmd.IMPORT]
     def __init__(self, parent, app: "ServerApp"):
         super().__init__(parent)
         self._app = app
@@ -324,7 +372,7 @@ class ScheduledDialog(tk.Toplevel):
         ff.pack(fill="x", **pad)
         self._lbl(ff, "Тип:").pack(side="left", padx=(0, 8))
         self._flag_btns: dict = {}
-        for f in FLAGS:
+        for f in self.FLAGS:
             b = tk.Button(ff, text=f, font=FONT_SMALL, relief="flat", bd=0,
                           padx=10, pady=3, cursor="hand2",
                           command=lambda x=f: self._sel(x))
@@ -353,9 +401,20 @@ class ScheduledDialog(tk.Toplevel):
 
         # SIMPL
         self._simpl_f = tk.Frame(self._df, bg=COLORS["bg"])
-        tk.Label(self._simpl_f, text="Выполнит строки из code.txt — поля не нужны",
-                 bg=COLORS["bg"], fg=COLORS["text_dim"],
-                 font=FONT_SMALL, pady=12).pack()
+        tk.Label (self._simpl_f, text="Выполнит строки из code.txt",
+                  bg=COLORS["bg"], fg=COLORS["text_dim"],
+                  font=FONT_SMALL, pady=6).pack ()
+
+        self._lbl (self._simpl_f, "Или выберите шаблон (необязательно)").pack (anchor="w", pady=(4, 1))
+        self._simpl_template_var = tk.StringVar ()
+        self._simpl_template_cb = ttk.Combobox (
+            self._simpl_f, textvariable=self._simpl_template_var,
+            font=FONT_MONO_S, width=38, state="readonly",
+        )
+        self._simpl_template_cb.bind ("<Button-1>", lambda e: self._refresh_sched_templates ())
+        self._simpl_template_cb.pack (fill="x", pady=(0, 6))
+        self._refresh_sched_templates ()
+
 
         # IMPORT
         self._import_f = tk.Frame(self._df, bg=COLORS["bg"])
@@ -395,6 +454,15 @@ class ScheduledDialog(tk.Toplevel):
         if um:
             opts += um.get_all_usernames()
         self._target_cb["values"] = opts
+
+    def _refresh_sched_templates(self):
+        """Загружает список шаблонов из TemplateManager."""
+        tmgr = srv.get_template_mgr ()
+
+        names = ["default"] + tmgr.get_all_template_name () if tmgr else ["None"]
+
+        self._simpl_template_cb["values"] = names
+        self._simpl_template_cb.set ("")
 
     def _sel(self, flag: str):
         """Устанавливает активный флаг и обновляет UI."""
@@ -452,7 +520,12 @@ class ScheduledDialog(tk.Toplevel):
                 return
             args += [src, dst]
 
-        # SIMPL — только target, доп. полей нет
+
+        elif flag == ServerCmd.SIMPL:
+            template = self._simpl_template_var.get ().strip ()
+            if template:
+                args.append (template)
+
         self._app.dispatch(ServerCmd.CHART_NEW, args)
         self.destroy()
 
@@ -809,7 +882,7 @@ class GroupDialog(tk.Toplevel):
 
     def _refresh_tags(self, container: tk.Frame, members: list,
                       remove_fn, color: str):
-        """Перерисовывает цветные теги-пилюли участников в контейнере."""
+        """Перерисовывает цветные теги участников в контейнере."""
         for w in container.winfo_children():
             w.destroy()
         if not members:
@@ -828,6 +901,258 @@ class GroupDialog(tk.Toplevel):
             tk.Button(tag, text="×", bg=color, fg="white", font=FONT_SMALL,
                       relief="flat", bd=0, cursor="hand2",
                       command=lambda x=m: remove_fn(x)).pack(side="left")
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  Шаблоны команд
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TemplateDialog(tk.Toplevel):
+    """
+    Управление шаблонами — три вкладки:
+      Создать  — новый шаблон + список команд
+      Изменить — добавить / удалить команды в существующем шаблоне
+      Удалить  — удалить шаблон целиком
+    """
+
+    TABS = [ServerCmd.TEMPLATE_NEW, ServerCmd.TEMPLATE_ADD, ServerCmd.TEMPLATE_DEL]
+
+    def __init__(self, parent, app: "ServerApp"):
+        super().__init__(parent)
+        self._app = app
+        self.title("Управление шаблонами")
+        self.configure(bg=COLORS["bg"])
+        self.resizable(False, False)
+        self.grab_set()
+        self._build()
+        self._center(parent)
+
+    def _center(self, parent):
+        self.update_idletasks()
+        x = parent.winfo_rootx() + (parent.winfo_width()  - self.winfo_width())  // 2
+        y = parent.winfo_rooty() + (parent.winfo_height() - self.winfo_height()) // 2
+        self.geometry(f"+{x}+{y}")
+
+    def _lbl(self, parent, text):
+        return tk.Label(parent, text=text, bg=COLORS["bg"],
+                        fg=COLORS["text_dim"], font=FONT_SMALL)
+
+    def _ent(self, parent, width=36, **kw):
+        return tk.Entry(parent, bg=COLORS["input_bg"], fg=COLORS["text"],
+                        insertbackground=COLORS["text"], relief="flat",
+                        font=FONT_MONO_S, width=width, **kw)
+
+    def _all_templates(self):
+        tmgr = srv.get_template_mgr()
+        return tmgr.get_all_template_name() if tmgr else []
+
+    def _build(self):
+        # ── вкладки ───────────────────────────────────────────────────────
+        tab_frame = tk.Frame(self, bg=COLORS["bg"])
+        tab_frame.pack(fill="x", padx=14, pady=(12, 0))
+
+        self._tab_var  = tk.StringVar(value=self.TABS[0])
+        self._tab_btns = {}
+        labels = {
+            ServerCmd.TEMPLATE_NEW: "CREAT",
+            ServerCmd.TEMPLATE_ADD: "EDIT",
+            ServerCmd.TEMPLATE_DEL: "DELETE",
+        }
+        for tab in self.TABS:
+            btn = tk.Button(tab_frame, text=labels[tab], font=FONT_UI_B,
+                            bg=COLORS["panel"], fg=COLORS["text_dim"],
+                            relief="flat", padx=12, pady=4, cursor="hand2",
+                            command=lambda t=tab: self._sel(t))
+            btn.pack(side="left", padx=(0, 4))
+            self._tab_btns[tab] = btn
+
+        # ── контент ───────────────────────────────────────────────────────
+        self._content = tk.Frame(self, bg=COLORS["bg"])
+        self._content.pack(fill="both", padx=14, pady=8)
+
+        self._pane_new  = self._build_new(self._content)
+        self._pane_edit = self._build_edit(self._content)
+        self._pane_del  = self._build_delete(self._content)
+
+        self._sel(self.TABS[0])
+
+    def _sel(self, tab):
+        self._tab_var.set(tab)
+        for t, btn in self._tab_btns.items():
+            active = t == tab
+            btn.configure(
+                bg=COLORS[t] if active else COLORS["panel"],
+                fg="white" if active else COLORS["text_dim"],
+            )
+        for pane in (self._pane_new, self._pane_edit, self._pane_del):
+            pane.pack_forget()
+        {
+            ServerCmd.TEMPLATE_NEW: self._pane_new,
+            ServerCmd.TEMPLATE_ADD: self._pane_edit,
+            ServerCmd.TEMPLATE_DEL: self._pane_del,
+        }[tab].pack(fill="both")
+
+    # ══════════════════════════════════════════════════════════════════
+    # ВКЛАДКА: СОЗДАТЬ
+    # ══════════════════════════════════════════════════════════════════
+
+    def _build_new(self, parent) -> tk.Frame:
+        f = tk.Frame(parent, bg=COLORS["bg"])
+
+        self._lbl(f, "Название шаблона").pack(anchor="w", pady=(6, 1))
+        self._n_name = self._ent(f, width=46)
+        self._n_name.pack(fill="x")
+
+        self._lbl(f, "Команды (каждая с новой строки)").pack(anchor="w", pady=(8, 1))
+        self._n_text = tk.Text(
+            f, bg=COLORS["input_bg"], fg=COLORS["text"],
+            insertbackground=COLORS["text"], relief="flat",
+            font=FONT_MONO_S, width=46, height=7, wrap="none",
+        )
+        self._n_text.pack(fill="x")
+
+        bf = tk.Frame(f, bg=COLORS["bg"])
+        bf.pack(fill="x", pady=(10, 4))
+        tk.Button(bf, text="Отмена", font=FONT_UI, bg=COLORS["panel"],
+                  fg=COLORS["text"], relief="flat", padx=14, pady=5,
+                  command=self.destroy).pack(side="right", padx=(6, 0))
+        tk.Button(bf, text="+ Создать", font=FONT_UI_B, bg=COLORS["accent2"],
+                  fg="white", relief="flat", padx=14, pady=5, cursor="hand2",
+                  command=self._submit_new).pack(side="right")
+        return f
+
+    def _submit_new(self):
+        name = self._n_name.get().strip()
+        if not name:
+            messagebox.showerror("Ошибка", "Введите название шаблона", parent=self)
+            return
+        raw = self._n_text.get("1.0", "end").strip()
+        if not raw:
+            messagebox.showerror("Ошибка", "Введите хотя бы одну команду", parent=self)
+            return
+        commands = [l.strip() for l in raw.splitlines() if l.strip()]
+        self._app.dispatch(ServerCmd.TEMPLATE_NEW, [name] + commands)
+        self.destroy()
+
+    # ══════════════════════════════════════════════════════════════════
+    # ВКЛАДКА: ИЗМЕНИТЬ
+    # ══════════════════════════════════════════════════════════════════
+
+    def _build_edit(self, parent) -> tk.Frame:
+        f = tk.Frame(parent, bg=COLORS["bg"])
+
+        self._lbl(f, "Шаблон").pack(anchor="w", pady=(6, 1))
+        self._e_tmpl_var = tk.StringVar()
+        self._e_tmpl_cb  = ttk.Combobox(f, textvariable=self._e_tmpl_var,
+                                         font=FONT_MONO_S, width=44)
+        self._e_tmpl_cb.pack(fill="x")
+        self._e_tmpl_cb.bind("<Button-1>", lambda e: self._refresh_edit_templates())
+        self._e_tmpl_cb.bind("<<ComboboxSelected>>", lambda e: self._load_edit_commands())
+
+        # добавить команды
+        self._lbl(f, "Добавить команды (каждая с новой строки)").pack(anchor="w", pady=(8, 1))
+        self._e_add_text = tk.Text(
+            f, bg=COLORS["input_bg"], fg=COLORS["text"],
+            insertbackground=COLORS["text"], relief="flat",
+            font=FONT_MONO_S, width=46, height=4, wrap="none",
+        )
+        self._e_add_text.pack(fill="x")
+
+        # удалить по индексам
+        self._lbl(f, "Удалить команды (индексы через пробел)").pack(anchor="w", pady=(8, 1))
+
+        self._e_cmds_box = tk.Listbox(
+            f, bg=COLORS["input_bg"], fg=COLORS["text_dim"],
+            font=FONT_MONO_S, height=4, relief="flat",
+            selectmode="extended", selectbackground=COLORS["error"],
+        )
+        self._e_cmds_box.pack(fill="x")
+
+        bf = tk.Frame(f, bg=COLORS["bg"])
+        bf.pack(fill="x", pady=(10, 4))
+        tk.Button(bf, text="Отмена", font=FONT_UI, bg=COLORS["panel"],
+                  fg=COLORS["text"], relief="flat", padx=14, pady=5,
+                  command=self.destroy).pack(side="right", padx=(6, 0))
+        tk.Button(bf, text="Сохранить", font=FONT_UI_B, bg=COLORS["accent"],
+                  fg="white", relief="flat", padx=14, pady=5, cursor="hand2",
+                  command=self._submit_edit).pack(side="right")
+        return f
+
+    def _refresh_edit_templates(self):
+        self._e_tmpl_cb["values"] = self._all_templates()
+
+    def _load_edit_commands(self):
+        """Загружает команды шаблона в Listbox."""
+        tmgr = srv.get_template_mgr()
+        if not tmgr:
+            return
+        name = self._e_tmpl_var.get().strip()
+        cmds = tmgr.get_comd_template_name(name) if name else []
+        self._e_cmds_box.delete(0, "end")
+        for i, c in enumerate(cmds):
+            self._e_cmds_box.insert("end", f"{i}: {c}")
+
+    def _submit_edit(self):
+        name = self._e_tmpl_var.get().strip()
+        if not name:
+            messagebox.showerror("Ошибка", "Выберите шаблон", parent=self)
+            return
+        # добавить
+        raw = self._e_add_text.get("1.0", "end").strip()
+        if raw:
+            commands = [l.strip() for l in raw.splitlines() if l.strip()]
+            self._app.dispatch(ServerCmd.TEMPLATE_ADD, [name] + commands)
+        # удалить выделенные
+        selected = [int(self._e_cmds_box.get(i).split(":")[0])
+                    for i in self._e_cmds_box.curselection()]
+        if selected:
+            self._app.dispatch(ServerCmd.TEMPLATE_RM, [name] + [str(i) for i in selected])
+        if not raw and not selected:
+            messagebox.showinfo("Нет изменений", "Ничего не выбрано", parent=self)
+            return
+        self.destroy()
+
+    # ══════════════════════════════════════════════════════════════════
+    # ВКЛАДКА: УДАЛИТЬ
+    # ══════════════════════════════════════════════════════════════════
+
+    def _build_delete(self, parent) -> tk.Frame:
+        f = tk.Frame(parent, bg=COLORS["bg"])
+
+        self._lbl(f, "Шаблон для удаления").pack(anchor="w", pady=(6, 1))
+        self._d_tmpl_var = tk.StringVar()
+        self._d_tmpl_cb  = ttk.Combobox(f, textvariable=self._d_tmpl_var,
+                                         font=FONT_MONO_S, width=44)
+        self._d_tmpl_cb.pack(fill="x")
+        self._d_tmpl_cb.bind("<Button-1>", lambda e: self._refresh_del_templates())
+
+        tk.Label(f, text="Шаблон будет удалён безвозвратно",
+                 bg=COLORS["bg"], fg=COLORS["warn"],
+                 font=FONT_SMALL).pack(anchor="w", pady=(10, 0))
+
+        bf = tk.Frame(f, bg=COLORS["bg"])
+        bf.pack(fill="x", pady=(8, 4))
+        tk.Button(bf, text="Отмена", font=FONT_UI, bg=COLORS["panel"],
+                  fg=COLORS["text"], relief="flat", padx=14, pady=5,
+                  command=self.destroy).pack(side="right", padx=(6, 0))
+        tk.Button(bf, text="Удалить шаблон", font=FONT_UI_B,
+                  bg=COLORS["error"], fg="white", relief="flat",
+                  padx=14, pady=5, cursor="hand2",
+                  command=self._submit_delete).pack(side="right")
+        return f
+
+    def _refresh_del_templates(self):
+        self._d_tmpl_cb["values"] = self._all_templates()
+
+    def _submit_delete(self):
+        name = self._d_tmpl_var.get().strip()
+        if not name:
+            messagebox.showerror("Ошибка", "Выберите шаблон", parent=self)
+            return
+        if not messagebox.askyesno("Подтверждение",
+                                   f"Удалить шаблон '{name}'?", parent=self):
+            return
+        self._app.dispatch(ServerCmd.TEMPLATE_DEL, [name])
+        self.destroy()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -856,6 +1181,7 @@ class CommandBar(tk.Frame):
             ("▶  Онлайн",     "accent",  self._open_online),
             ("⏱  Отложенная", "sched",   self._open_sched),
             ("👥 Группы",     "group",   self._open_group),
+            ("📋 Шаблоны", "accent2", self._open_template),
         ]:
             tk.Button(mode_frame, text=text, font=FONT_UI_B,
                       bg=COLORS[color], fg="white", relief="flat",
@@ -905,6 +1231,10 @@ class CommandBar(tk.Frame):
     def _open_group(self):
         """Открывает диалог управления группами."""
         GroupDialog(self._app.root, self._app)
+
+    def _open_template(self):
+        """Открывает диалог управления шаблонами."""
+        TemplateDialog (self._app.root, self._app)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
